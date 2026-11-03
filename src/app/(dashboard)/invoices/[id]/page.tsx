@@ -1,15 +1,18 @@
 import PrintInvoiceButton from "@/components/print-invoice-button";
+import InvoiceApprovalActions from "@/components/invoice-approval-actions";
+import InvoiceSubmitAction from "@/components/invoice-submit-action";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, CalendarDays, Building2, FileText } from "lucide-react";
-
 import { createClient } from "@/lib/supabase/server";
 
 type InvoiceDetails = {
   id: string;
   invoice_number: string | null;
   status: string;
+  created_by: string;
+  rejection_reason: string | null;
   currency: string;
   invoice_date: string;
   due_date: string | null;
@@ -94,8 +97,16 @@ export default async function InvoiceDetailsPage({
     redirect("/login");
   }
 
+  // Get the user's role.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", claims.sub)
+    .maybeSingle();
+
+  const isAdmin = profile?.role === "admin";
+
   // Fetch the selected invoice.
-  // RLS controls which invoices the user is allowed to view.
   const { data: invoiceData, error: invoiceError } = await supabase
     .from("invoices")
     .select(
@@ -103,6 +114,8 @@ export default async function InvoiceDetailsPage({
       id,
       invoice_number,
       status,
+      created_by,
+      rejection_reason,
       currency,
       invoice_date,
       due_date,
@@ -137,7 +150,11 @@ export default async function InvoiceDetailsPage({
     notFound();
   }
 
+  // Convert the fetched invoice into our invoice type.
   const invoice = invoiceData as unknown as InvoiceDetails;
+
+  // Check whether the logged-in user created this invoice.
+  const isOwner = invoice.created_by === claims.sub;
 
   // Fetch the invoice line items.
   const { data: itemData, error: itemError } = await supabase
@@ -183,7 +200,7 @@ export default async function InvoiceDetailsPage({
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <span
               className={`rounded-full px-4 py-2 text-xs font-semibold ${statusStyle(
                 invoice.status
@@ -193,11 +210,31 @@ export default async function InvoiceDetailsPage({
             </span>
 
             <PrintInvoiceButton />
+
+            {/* Submit button for the invoice creator */}
+            {isOwner && invoice.status === "draft" && (
+              <InvoiceSubmitAction invoiceId={invoice.id} />
+            )}
+
+            {/* Edit button for the invoice creator */}
+            {isOwner && invoice.status === "rejected" && (
+              <Link
+                href={`/invoices/${invoice.id}/edit`}
+                className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white hover:bg-[#203F63] print:hidden"
+              >
+                Edit Invoice
+              </Link>
+            )}
+
+            {/* Approval controls for administrators */}
+            {isAdmin && invoice.status === "pending_approval" && (
+              <InvoiceApprovalActions invoiceId={invoice.id} />
+            )}
           </div>
         </div>
 
         {/* Invoice document */}
-        <div className="invoice-document overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm print:overflow-visible print:border-0 print:shadow-none">          
+        <div className="invoice-document overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm print:overflow-visible print:border-0 print:shadow-none">
           <div className="border-b border-slate-200 p-6 md:p-9">
             <div className="flex flex-wrap items-start justify-between gap-6">
               <div>
@@ -220,7 +257,12 @@ export default async function InvoiceDetailsPage({
                 </h2>
 
                 <p className="mt-2 text-sm font-semibold text-slate-800">
-                  {invoice.invoice_number || "Draft — Not assigned"}
+                  {invoice.invoice_number ||
+                    (invoice.status === "pending_approval"
+                      ? "Awaiting Approval"
+                      : invoice.status === "rejected"
+                      ? "Rejected — Revision Required"
+                      : "Draft — Not assigned")}
                 </p>
 
                 <span className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
@@ -305,6 +347,21 @@ export default async function InvoiceDetailsPage({
               </div>
             </div>
           </div>
+
+          {/* Rejection reason */}
+          {invoice.status === "rejected" && invoice.rejection_reason && (
+            <div className="border-b border-red-200 bg-red-50 p-6 md:p-9">
+              <h3 className="font-bold text-red-800">Invoice Rejected</h3>
+
+              <p className="mt-2 text-sm text-red-700">
+                {invoice.rejection_reason}
+              </p>
+
+              <p className="mt-2 text-xs text-red-600">
+                Please correct the issues and resubmit this invoice.
+              </p>
+            </div>
+          )}
 
           {/* Invoice items */}
           <div className="p-6 md:p-9">

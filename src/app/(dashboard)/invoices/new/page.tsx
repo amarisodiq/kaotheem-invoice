@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -13,6 +12,7 @@ import {
   Send,
 } from "lucide-react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import {
   saveInvoice,
   submitInvoiceForApproval,
@@ -23,6 +23,15 @@ type InvoiceItem = {
   description: string;
   quantity: number;
   price: number;
+};
+
+type CustomerRecord = {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
 };
 
 const inputClass =
@@ -44,10 +53,19 @@ export default function NewInvoicePage() {
   const router = useRouter();
 
   const [currency, setCurrency] = useState("NGN");
+
+  // Customer selection
+  const [customers, setCustomers] = useState<CustomerRecord[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [customersLoading, setCustomersLoading] = useState(true);
+  const [customerLoadError, setCustomerLoadError] = useState("");
+
+  // Customer details
   const [customer, setCustomer] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+
   const [invoiceDate, setInvoiceDate] = useState(getLocalDate);
   const [dueDate, setDueDate] = useState("");
 
@@ -72,6 +90,41 @@ export default function NewInvoicePage() {
   const vatEnabled = false;
   const vatRate = 7.5;
 
+  // Load existing customers from Supabase.
+  useEffect(() => {
+    async function loadCustomers() {
+      try {
+        const supabase = createClient();
+
+        const { data, error } = await supabase
+          .from("customers")
+          .select(
+            "id, company_name, contact_name, email, phone, address"
+          )
+          .order("company_name", { ascending: true });
+
+        if (error) {
+          console.error("Customer loading error:", error);
+          setCustomerLoadError(
+            "Unable to load customers. Please refresh the page."
+          );
+          return;
+        }
+
+        setCustomers(data ?? []);
+      } catch (error) {
+        console.error("Customer loading error:", error);
+        setCustomerLoadError(
+          "Something went wrong while loading customers."
+        );
+      } finally {
+        setCustomersLoading(false);
+      }
+    }
+
+    void loadCustomers();
+  }, []);
+
   const subtotal = items.reduce(
     (sum, item) => sum + item.quantity * item.price,
     0
@@ -88,6 +141,27 @@ export default function NewInvoicePage() {
   };
 
   const symbol = symbols[currency];
+
+  const handleCustomerChange = (selectedId: string) => {
+    setCustomerId(selectedId);
+
+    const selectedCustomer = customers.find(
+      (item) => item.id === selectedId
+    );
+
+    if (!selectedCustomer) {
+      setCustomer("");
+      setEmail("");
+      setPhone("");
+      setAddress("");
+      return;
+    }
+
+    setCustomer(selectedCustomer.company_name);
+    setEmail(selectedCustomer.email ?? "");
+    setPhone(selectedCustomer.phone ?? "");
+    setAddress(selectedCustomer.address ?? "");
+  };
 
   const addItem = () => {
     if (savedInvoiceId) return;
@@ -132,6 +206,7 @@ export default function NewInvoicePage() {
     })}`;
 
   const isFormValid =
+    Boolean(customerId) &&
     customer.trim().length > 0 &&
     items.length > 0 &&
     items.every(
@@ -152,6 +227,7 @@ export default function NewInvoicePage() {
 
     try {
       const result = await saveInvoice({
+        customerId,
         customer,
         email,
         phone,
@@ -181,9 +257,7 @@ export default function NewInvoicePage() {
       console.error("Save invoice error:", error);
 
       setMessageType("error");
-      setMessage(
-        "Something went wrong while saving. Please try again."
-      );
+      setMessage("Something went wrong while saving. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -201,6 +275,7 @@ export default function NewInvoicePage() {
       // Save the invoice first if it has not already been saved.
       if (!invoiceId) {
         const saveResult = await saveInvoice({
+          customerId,
           customer,
           email,
           phone,
@@ -222,7 +297,6 @@ export default function NewInvoicePage() {
         }
 
         invoiceId = saveResult.invoiceId;
-
         setSavedInvoiceId(invoiceId);
       }
 
@@ -232,7 +306,7 @@ export default function NewInvoicePage() {
         return;
       }
 
-      // Submit the saved invoice through the secure database function.
+      // Submit through the secure database function.
       const submitResult =
         await submitInvoiceForApproval(invoiceId);
 
@@ -245,9 +319,7 @@ export default function NewInvoicePage() {
       }
 
       setMessageType("success");
-      setMessage(
-        "Invoice submitted successfully. Redirecting..."
-      );
+      setMessage("Invoice submitted successfully. Redirecting...");
 
       router.push(`/invoices/${invoiceId}`);
       router.refresh();
@@ -377,20 +449,79 @@ export default function NewInvoicePage() {
             </h2>
 
             <p className="mb-6 text-xs text-slate-600">
-              Enter the details of the customer receiving this invoice.
+              Select a registered customer. Their information will be filled in automatically.
             </p>
+
+            <div className="mb-5">
+              <label className={labelClass}>
+                Select Customer / Company *
+              </label>
+
+              <select
+                value={customerId}
+                disabled={Boolean(savedInvoiceId) || customersLoading}
+                onChange={(e) => handleCustomerChange(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">
+                  {customersLoading
+                    ? "Loading customers..."
+                    : "Select a customer"}
+                </option>
+
+                {customers.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.company_name}
+                  </option>
+                ))}
+              </select>
+
+              {customerLoadError && (
+                <p className="mt-2 text-sm text-red-600">
+                  {customerLoadError}
+                </p>
+              )}
+
+              {!customersLoading &&
+                !customerLoadError &&
+                customers.length === 0 && (
+                  <p className="mt-2 text-sm text-amber-700">
+                    No customers have been registered yet.{" "}
+                    <Link
+                      href="/customers"
+                      className="font-semibold underline"
+                    >
+                      Add a customer
+                    </Link>{" "}
+                    before creating an invoice.
+                  </p>
+                )}
+
+              {!customersLoading &&
+                customers.length > 0 &&
+                !customerLoadError && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Need to register another customer?{" "}
+                    <Link
+                      href="/customers"
+                      className="font-semibold text-[#142B49] underline"
+                    >
+                      Manage customers
+                    </Link>
+                  </p>
+                )}
+            </div>
 
             <div className="grid gap-5 md:grid-cols-2">
               <div>
                 <label className={labelClass}>
-                  Customer / Company Name *
+                  Customer / Company Name
                 </label>
 
                 <input
                   value={customer}
-                  disabled={Boolean(savedInvoiceId)}
-                  onChange={(e) => setCustomer(e.target.value)}
-                  placeholder="Enter customer name"
+                  readOnly
+                  placeholder="Customer company name"
                   className={inputClass}
                 />
               </div>
@@ -401,8 +532,7 @@ export default function NewInvoicePage() {
                 <input
                   type="email"
                   value={email}
-                  disabled={Boolean(savedInvoiceId)}
-                  onChange={(e) => setEmail(e.target.value)}
+                  readOnly
                   placeholder="customer@company.com"
                   className={inputClass}
                 />
@@ -414,9 +544,8 @@ export default function NewInvoicePage() {
                 <input
                   type="tel"
                   value={phone}
-                  disabled={Boolean(savedInvoiceId)}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+234..."
+                  readOnly
+                  placeholder="Customer phone number"
                   className={inputClass}
                 />
               </div>
@@ -426,8 +555,7 @@ export default function NewInvoicePage() {
 
                 <input
                   value={address}
-                  disabled={Boolean(savedInvoiceId)}
-                  onChange={(e) => setAddress(e.target.value)}
+                  readOnly
                   placeholder="Customer business address"
                   className={inputClass}
                 />
