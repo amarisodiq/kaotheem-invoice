@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useTransition } from "react";
@@ -6,6 +7,7 @@ import { Plus, Trash2, Save, Loader2 } from "lucide-react";
 import {
   updateRejectedInvoice,
   resubmitRejectedInvoice,
+  submitInvoiceForApproval,
 } from "@/app/(dashboard)/invoices/actions";
 
 type InvoiceItem = {
@@ -16,6 +18,10 @@ type InvoiceItem = {
 
 type Props = {
   invoiceId: string;
+  status: "draft" | "rejected";
+  canSubmit: boolean;
+  vatEnabled: boolean;
+  vatRate: number;
   initialData: {
     currency: string;
     invoiceDate: string;
@@ -28,6 +34,10 @@ const currencies = ["NGN", "USD", "GBP", "EUR"];
 
 export default function EditInvoiceForm({
   invoiceId,
+  status,
+  canSubmit,
+  vatEnabled,
+  vatRate,
   initialData,
 }: Props) {
   const router = useRouter();
@@ -38,12 +48,17 @@ export default function EditInvoiceForm({
   const [dueDate, setDueDate] = useState(initialData.dueDate);
   const [items, setItems] = useState<InvoiceItem[]>(initialData.items);
   const [message, setMessage] = useState("");
-  const [saved, setSaved] = useState(false);
 
   const subtotal = items.reduce(
     (sum, item) => sum + item.quantity * item.price,
     0
   );
+
+  const vatAmount = vatEnabled
+    ? Number(((subtotal * vatRate) / 100).toFixed(2))
+    : 0;
+
+  const total = subtotal + vatAmount;
 
   function updateItem(
     index: number,
@@ -74,19 +89,17 @@ export default function EditInvoiceForm({
     setItems((current) => current.filter((_, i) => i !== index));
   }
 
-  function handleSave() {
-    setMessage("");
-  
+  function validateForm() {
     if (!invoiceDate || !currency) {
       setMessage("Please complete the invoice date and currency.");
-      return;
+      return false;
     }
-  
+
     if (dueDate && dueDate < invoiceDate) {
       setMessage("The due date cannot be before the invoice date.");
-      return;
+      return false;
     }
-  
+
     if (
       items.length === 0 ||
       items.some(
@@ -98,72 +111,69 @@ export default function EditInvoiceForm({
           item.price <= 0
       )
     ) {
-      setMessage("Check every item. Descriptions, quantities and prices are required.");
-      return;
+      setMessage(
+        "Check every item. Descriptions, quantities and prices are required."
+      );
+      return false;
     }
-  
+
+    return true;
+  }
+
+  async function saveChanges() {
+    return await updateRejectedInvoice(invoiceId, {
+      invoiceDate,
+      dueDate,
+      currency,
+      items,
+    });
+  }
+
+  function handleSave() {
+    setMessage("");
+
+    if (!validateForm()) return;
+
     startTransition(async () => {
-      const result = await updateRejectedInvoice(invoiceId, {
-        invoiceDate,
-        dueDate,
-        currency,
-        items,
-      });
-  
+      const result = await saveChanges();
+
       setMessage(result.message);
-  
+
       if (result.success) {
         router.refresh();
       }
     });
   }
 
-  function handleResubmit() {
+  function handleSubmit() {
     setMessage("");
-  
-    if (
-      items.length === 0 ||
-      items.some(
-        (item) =>
-          !item.description.trim() ||
-          !Number.isFinite(item.quantity) ||
-          !Number.isFinite(item.price) ||
-          item.quantity <= 0 ||
-          item.price <= 0
-      )
-    ) {
-      setMessage("Please check all invoice items before resubmitting.");
-      return;
-    }
-  
-    if (dueDate && dueDate < invoiceDate) {
-      setMessage("The due date cannot be before the invoice date.");
-      return;
-    }
-  
+
+    if (!canSubmit) return;
+    if (!validateForm()) return;
+
     startTransition(async () => {
-      const saveResult = await updateRejectedInvoice(invoiceId, {
-        invoiceDate,
-        dueDate,
-        currency,
-        items,
-      });
-  
+      const saveResult = await saveChanges();
+
       if (!saveResult.success) {
         setMessage(saveResult.message);
         return;
       }
-  
-      const submitResult = await resubmitRejectedInvoice(invoiceId);
-  
+
+      const submitResult =
+        status === "rejected"
+          ? await resubmitRejectedInvoice(invoiceId)
+          : await submitInvoiceForApproval(invoiceId);
+
       setMessage(submitResult.message);
-  
+
       if (submitResult.success) {
         router.push(`/invoices/${invoiceId}`);
         router.refresh();
       }
     });
   }
+
+  const isRejected = status === "rejected";
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
@@ -176,7 +186,7 @@ export default function EditInvoiceForm({
             type="date"
             value={invoiceDate}
             onChange={(e) => setInvoiceDate(e.target.value)}
-            disabled={isPending || saved}
+            disabled={isPending}
             className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm"
           />
         </div>
@@ -189,7 +199,7 @@ export default function EditInvoiceForm({
             type="date"
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
-            disabled={isPending || saved}
+            disabled={isPending}
             className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm"
           />
         </div>
@@ -201,7 +211,7 @@ export default function EditInvoiceForm({
           <select
             value={currency}
             onChange={(e) => setCurrency(e.target.value)}
-            disabled={isPending || saved}
+            disabled={isPending}
             className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm"
           >
             {currencies.map((item) => (
@@ -222,7 +232,7 @@ export default function EditInvoiceForm({
           <button
             type="button"
             onClick={addItem}
-            disabled={isPending || saved}
+            disabled={isPending}
             className="inline-flex items-center gap-2 rounded-lg bg-[#142B49] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             <Plus size={16} />
@@ -245,7 +255,7 @@ export default function EditInvoiceForm({
                   onChange={(e) =>
                     updateItem(index, "description", e.target.value)
                   }
-                  disabled={isPending || saved}
+                  disabled={isPending}
                   placeholder="Service description"
                   className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm"
                 />
@@ -263,7 +273,7 @@ export default function EditInvoiceForm({
                   onChange={(e) =>
                     updateItem(index, "quantity", e.target.value)
                   }
-                  disabled={isPending || saved}
+                  disabled={isPending}
                   className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm"
                 />
               </div>
@@ -280,7 +290,7 @@ export default function EditInvoiceForm({
                   onChange={(e) =>
                     updateItem(index, "price", e.target.value)
                   }
-                  disabled={isPending || saved}
+                  disabled={isPending}
                   className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm"
                 />
               </div>
@@ -296,7 +306,7 @@ export default function EditInvoiceForm({
                 <button
                   type="button"
                   onClick={() => removeItem(index)}
-                  disabled={isPending || saved || items.length === 1}
+                  disabled={isPending || items.length === 1}
                   className="rounded-lg p-2 text-red-600 hover:bg-red-50 disabled:opacity-30"
                   aria-label="Remove item"
                 >
@@ -313,17 +323,32 @@ export default function EditInvoiceForm({
           <div className="flex justify-between text-sm text-slate-600">
             <span>Subtotal</span>
             <span>
-              {currency} {subtotal.toLocaleString(undefined, {
+              {currency}{" "}
+              {subtotal.toLocaleString(undefined, {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
             </span>
           </div>
 
+          {vatEnabled && (
+            <div className="mt-3 flex justify-between text-sm text-slate-600">
+              <span>VAT ({vatRate}%)</span>
+              <span>
+                {currency}{" "}
+                {vatAmount.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </span>
+            </div>
+          )}
+
           <div className="mt-3 flex justify-between border-t border-slate-200 pt-3 font-bold text-slate-900">
             <span>Total</span>
             <span>
-              {currency} {subtotal.toLocaleString(undefined, {
+              {currency}{" "}
+              {total.toLocaleString(undefined, {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
@@ -342,21 +367,31 @@ export default function EditInvoiceForm({
         <button
           type="button"
           onClick={handleSave}
-          disabled={isPending || saved}
+          disabled={isPending}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50"
         >
-          {isPending ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
-          Save Corrections
+          {isPending ? (
+            <Loader2 size={17} className="animate-spin" />
+          ) : (
+            <Save size={17} />
+          )}
+          {isRejected ? "Save Corrections" : "Save Draft"}
         </button>
 
-        <button
-          type="button"
-          onClick={handleResubmit}
-          disabled={isPending || saved}
-          className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
-        >
-          {isPending ? "Processing..." : "Save & Resubmit"}
-        </button>
+        {canSubmit && (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={isPending}
+            className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {isPending
+              ? "Processing..."
+              : isRejected
+                ? "Save & Resubmit"
+                : "Save & Submit for Approval"}
+          </button>
+        )}
       </div>
     </div>
   );

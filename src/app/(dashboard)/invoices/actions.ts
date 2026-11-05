@@ -1,4 +1,3 @@
-
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -58,6 +57,7 @@ async function isAdministrator(
 }
 
 // SAVE A NEW INVOICE AS DRAFT
+
 export async function saveInvoice(input: SaveInvoiceInput) {
   const { supabase, userId } = await getAuthenticatedUser();
 
@@ -68,10 +68,10 @@ export async function saveInvoice(input: SaveInvoiceInput) {
     };
   }
 
-  if (!input.customer?.trim()) {
+  if (!input.customerId) {
     return {
       success: false,
-      message: "Customer name is required.",
+      message: "Please select a registered customer.",
     };
   }
 
@@ -122,149 +122,38 @@ export async function saveInvoice(input: SaveInvoiceInput) {
     };
   }
 
-  const subtotal = validItems.reduce(
-    (sum, item) => sum + item.quantity * item.price,
-    0
+  const { data: invoiceId, error } = await supabase.rpc(
+    "save_invoice_with_items",
+    {
+      p_customer_id: input.customerId,
+      p_currency: input.currency,
+      p_invoice_date: input.invoiceDate,
+      p_due_date: input.dueDate || null,
+      p_items: validItems.map((item) => ({
+        description: item.description.trim(),
+        quantity: item.quantity,
+        price: item.price,
+      })),
+    }
   );
 
-  if (!Number.isFinite(subtotal) || subtotal <= 0) {
-    return {
-      success: false,
-      message: "The invoice total must be greater than zero.",
-    };
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (profileError || !profile) {
-    return {
-      success: false,
-      message: "Your user profile could not be verified.",
-    };
-  }
-
-  // VERIFY THE SELECTED CUSTOMER OR FIND/CREATE A CUSTOMER
-  let resolvedCustomerId: string;
-
-  if (input.customerId) {
-    const { data: selectedCustomer, error: customerError } = await supabase
-      .from("customers")
-      .select("id")
-      .eq("id", input.customerId)
-      .maybeSingle();
-
-    if (customerError || !selectedCustomer) {
-      return {
-        success: false,
-        message: "The selected customer could not be verified.",
-      };
-    }
-
-    resolvedCustomerId = selectedCustomer.id;
-  } else {
-    const { data: existingCustomer, error: customerLookupError } =
-      await supabase
-        .from("customers")
-        .select("id")
-        .eq("company_name", input.customer.trim())
-        .limit(1)
-        .maybeSingle();
-
-    if (customerLookupError) {
-      return {
-        success: false,
-        message: "Unable to check existing customer records.",
-      };
-    }
-
-    if (existingCustomer) {
-      resolvedCustomerId = existingCustomer.id;
-    } else {
-      const { data: newCustomer, error: customerError } = await supabase
-        .from("customers")
-        .insert({
-          company_name: input.customer.trim(),
-          contact_name: null,
-          email: input.email.trim() || null,
-          phone: input.phone.trim() || null,
-          address: input.address.trim() || null,
-          created_by: userId,
-        })
-        .select("id")
-        .single();
-
-      if (customerError || !newCustomer) {
-        return {
-          success: false,
-          message: customerError?.message || "Unable to create customer.",
-        };
-      }
-
-      resolvedCustomerId = newCustomer.id;
-    }
-  }
-
-  // CREATE THE INVOICE
-  const { data: invoice, error: invoiceError } = await supabase
-    .from("invoices")
-    .insert({
-      customer_id: resolvedCustomerId,
-      created_by: userId,
-      status: "draft",
-      currency: input.currency,
-      invoice_date: input.invoiceDate,
-      due_date: input.dueDate || null,
-      subtotal,
-      vat_enabled: false,
-      vat_rate: 0,
-      vat_amount: 0,
-      total: subtotal,
-    })
-    .select("id")
-    .single();
-
-  if (invoiceError || !invoice) {
-    return {
-      success: false,
-      message: invoiceError?.message || "Unable to save invoice.",
-    };
-  }
-
-  // SAVE INVOICE LINE ITEMS
-  const invoiceItems = validItems.map((item) => ({
-    invoice_id: invoice.id,
-    description: item.description.trim(),
-    quantity: item.quantity,
-    unit_price: item.price,
-    line_total: item.quantity * item.price,
-  }));
-
-  const { error: itemsError } = await supabase
-    .from("invoice_items")
-    .insert(invoiceItems);
-
-  if (itemsError) {
-    console.error("Invoice items save error:", itemsError);
+  if (error || !invoiceId) {
+    console.error("Invoice saving error:", error);
 
     return {
       success: false,
-      invoiceId: invoice.id,
-      message:
-        "The invoice was created, but its items could not be saved. Please contact the administrator before retrying.",
+      message: error?.message || "Unable to save invoice. Please try again.",
     };
   }
 
   revalidatePath("/invoices");
   revalidatePath("/customers");
+  revalidatePath("/");
 
   return {
     success: true,
-    invoiceId: invoice.id,
-    message: "Invoice saved successfully as a draft.",
+    invoiceId,
+    message: "Invoice and items saved successfully as a draft.",
   };
 }
 
@@ -357,8 +246,7 @@ export async function approveInvoice(invoiceId: string) {
 
   return {
     success: true,
-    message:
-      typeof data === "string" ? data : "Invoice approved successfully.",
+    message: typeof data === "string" ? data : "Invoice approved successfully.",
   };
 }
 
@@ -677,5 +565,197 @@ export async function inviteStaffMember(fullName: string, email: string) {
     message: existingUser
       ? `Staff profile created for ${cleanEmail}.`
       : `Invitation sent to ${cleanEmail}.`,
+  };
+}
+
+
+// RECORD AN INVOICE PAYMENT
+export async function recordInvoicePayment(input: {
+  invoiceId: string;
+  amount: number;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+}) {
+  const { supabase, userId } = await getAuthenticatedUser();
+
+  if (!userId) {
+    return {
+      success: false,
+      message: "Your session has expired. Please sign in again.",
+    };
+  }
+
+  if (!(await isAdministrator(supabase, userId))) {
+    return {
+      success: false,
+      message: "Only administrators can record payments.",
+    };
+  }
+
+  if (!input.invoiceId) {
+    return {
+      success: false,
+      message: "Invalid invoice reference.",
+    };
+  }
+
+  if (
+    !Number.isFinite(input.amount) ||
+    input.amount <= 0 ||
+    input.amount > 999999999999
+  ) {
+    return {
+      success: false,
+      message: "Enter a valid payment amount.",
+    };
+  }
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.paymentDate) ||
+    !Number.isFinite(Date.parse(`${input.paymentDate}T00:00:00Z`)) ||
+    !input.paymentMethod.trim()
+  ) {
+    return {
+      success: false,
+      message: "Enter a valid payment date and payment method.",
+    };
+  }
+
+  const { data, error } = await supabase.rpc(
+    "record_invoice_payment",
+    {
+      p_invoice_id: input.invoiceId,
+      p_amount: input.amount,
+      p_payment_date: input.paymentDate,
+      p_payment_method: input.paymentMethod.trim(),
+      p_reference: input.reference.trim() || null,
+    }
+  );
+
+  if (error) {
+    console.error("Payment recording error:", error);
+
+    return {
+      success: false,
+      message: error.message || "Unable to record payment.",
+    };
+  }
+
+  revalidatePath("/payments");
+  revalidatePath("/invoices");
+  revalidatePath(`/invoices/${input.invoiceId}`);
+  revalidatePath("/");
+
+  return {
+    success: true,
+    message:
+      typeof data === "string"
+        ? data
+        : "Payment recorded successfully.",
+  };
+}
+
+// UPDATE VAT SETTINGS
+export async function updateVATSettings(input: {
+  enabled: boolean;
+  rate: number;
+}) {
+  const { supabase, userId } = await getAuthenticatedUser();
+
+  if (!userId) {
+    return {
+      success: false,
+      message: "Please sign in again.",
+    };
+  }
+
+  if (!(await isAdministrator(supabase, userId))) {
+    return {
+      success: false,
+      message: "Only administrators can update VAT settings.",
+    };
+  }
+
+  if (
+    !Number.isFinite(input.rate) ||
+    input.rate < 0 ||
+    input.rate > 100
+  ) {
+    return {
+      success: false,
+      message: "VAT rate must be between 0 and 100.",
+    };
+  }
+
+  const { data, error } = await supabase.rpc(
+    "update_vat_settings",
+    {
+      p_enabled: input.enabled,
+      p_rate: input.rate,
+    }
+  );
+
+  if (error) {
+    console.error("VAT settings error:", error);
+
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/invoices/new");
+
+  return {
+    success: true,
+    message: typeof data === "string"
+      ? data
+      : "VAT settings saved successfully.",
+  };
+}
+
+
+// UPDATE PERSONAL PROFILE
+export async function updatePersonalProfile(input: {
+  fullName: string;
+}) {
+  const { supabase, userId } = await getAuthenticatedUser();
+
+  if (!userId) {
+    return {
+      success: false,
+      message: "Your session has expired. Please sign in again.",
+    };
+  }
+
+  const fullName = input.fullName.trim();
+
+  if (fullName.length < 2 || fullName.length > 100) {
+    return {
+      success: false,
+      message: "Name must be between 2 and 100 characters.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ full_name: fullName })
+    .eq("id", userId);
+
+  if (error) {
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/");
+
+  return {
+    success: true,
+    message: "Your name has been updated successfully.",
   };
 }

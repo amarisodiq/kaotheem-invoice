@@ -1,4 +1,3 @@
-
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
@@ -12,8 +11,7 @@ export default async function EditInvoicePage({ params }: PageProps) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: authData, error: authError } =
-    await supabase.auth.getClaims();
+  const { data: authData, error: authError } = await supabase.auth.getClaims();
 
   const claims = authError ? null : authData?.claims;
 
@@ -21,11 +19,24 @@ export default async function EditInvoicePage({ params }: PageProps) {
     redirect("/login");
   }
 
-  const { data: invoice, error } = await supabase
+  const userId = claims.sub;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const isAdmin = profile?.role === "admin";
+
+  let invoiceQuery = supabase
     .from("invoices")
-    .select(`
+    .select(
+      `
       id,
       invoice_number,
+      vat_enabled,
+      vat_rate,
       status,
       created_by,
       currency,
@@ -35,11 +46,16 @@ export default async function EditInvoicePage({ params }: PageProps) {
       customers (
         company_name
       )
-    `)
+    `
+    )
     .eq("id", id)
-    .eq("created_by", claims.sub)
-    .eq("status", "rejected")
-    .maybeSingle();
+    .in("status", ["draft", "rejected"]);
+
+  if (!isAdmin) {
+    invoiceQuery = invoiceQuery.eq("created_by", userId);
+  }
+
+  const { data: invoice, error } = await invoiceQuery.maybeSingle();
 
   if (error) {
     throw new Error("Unable to load this invoice.");
@@ -58,6 +74,8 @@ export default async function EditInvoicePage({ params }: PageProps) {
     throw new Error("Unable to load invoice items.");
   }
 
+  const isRejected = invoice.status === "rejected";
+
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="mx-auto max-w-5xl">
@@ -70,7 +88,7 @@ export default async function EditInvoicePage({ params }: PageProps) {
 
         <div className="mt-6">
           <h1 className="text-2xl font-bold text-slate-900">
-            Edit Rejected Invoice
+            {isRejected ? "Edit Rejected Invoice" : "Edit Draft Invoice"}
           </h1>
 
           <p className="mt-2 text-sm text-slate-500">
@@ -78,11 +96,12 @@ export default async function EditInvoicePage({ params }: PageProps) {
           </p>
         </div>
 
-        {invoice.rejection_reason && (
+        {isRejected && invoice.rejection_reason && (
           <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5">
             <h2 className="font-bold text-red-800">
               Administrator's Rejection Reason
             </h2>
+
             <p className="mt-2 text-sm text-red-700">
               {invoice.rejection_reason}
             </p>
@@ -92,6 +111,10 @@ export default async function EditInvoicePage({ params }: PageProps) {
         <div className="mt-8">
           <EditInvoiceForm
             invoiceId={invoice.id}
+            status={invoice.status as "draft" | "rejected"}
+            canSubmit={invoice.created_by === userId}
+            vatEnabled={Boolean(invoice.vat_enabled)}
+            vatRate={Number(invoice.vat_rate || 0)}
             initialData={{
               currency: invoice.currency,
               invoiceDate: invoice.invoice_date,

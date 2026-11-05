@@ -13,10 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import {
-  saveInvoice,
-  submitInvoiceForApproval,
-} from "../actions";
+import { saveInvoice, submitInvoiceForApproval } from "../actions";
 
 type InvoiceItem = {
   id: number;
@@ -37,8 +34,7 @@ type CustomerRecord = {
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:border-[#142B49] focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100";
 
-const labelClass =
-  "mb-2 block text-sm font-medium text-slate-700";
+const labelClass = "mb-2 block text-sm font-medium text-slate-700";
 
 function getLocalDate() {
   const date = new Date();
@@ -80,15 +76,14 @@ export default function NewInvoicePage() {
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] =
-    useState<"error" | "success">("error");
+  const [messageType, setMessageType] = useState<"error" | "success">("error");
 
-  const [savedInvoiceId, setSavedInvoiceId] =
-    useState<string | null>(null);
+  const [savedInvoiceId, setSavedInvoiceId] = useState<string | null>(null);
 
   // VAT remains disabled until an administrator enables it.
-  const vatEnabled = false;
-  const vatRate = 7.5;
+  const [vatEnabled, setVatEnabled] = useState(false);
+  const [vatRate, setVatRate] = useState(7.5);
+  const [vatLoading, setVatLoading] = useState(true);
 
   // Load existing customers from Supabase.
   useEffect(() => {
@@ -98,9 +93,7 @@ export default function NewInvoicePage() {
 
         const { data, error } = await supabase
           .from("customers")
-          .select(
-            "id, company_name, contact_name, email, phone, address"
-          )
+          .select("id, company_name, contact_name, email, phone, address")
           .order("company_name", { ascending: true });
 
         if (error) {
@@ -114,15 +107,42 @@ export default function NewInvoicePage() {
         setCustomers(data ?? []);
       } catch (error) {
         console.error("Customer loading error:", error);
-        setCustomerLoadError(
-          "Something went wrong while loading customers."
-        );
+        setCustomerLoadError("Something went wrong while loading customers.");
       } finally {
         setCustomersLoading(false);
       }
     }
 
     void loadCustomers();
+  }, []);
+
+  useEffect(() => {
+    async function loadVatSettings() {
+      const supabase = createClient();
+  
+      const { data, error } = await supabase
+        .from("company_settings")
+        .select("setting_value")
+        .eq("setting_key", "vat")
+        .maybeSingle();
+  
+      if (error) {
+        console.error("VAT settings error:", error);
+        setVatLoading(false);
+        return;
+      }
+  
+      const settings = data?.setting_value as {
+        enabled?: boolean;
+        rate?: number;
+      } | null;
+  
+      setVatEnabled(settings?.enabled === true);
+      setVatRate(Number(settings?.rate ?? 7.5));
+      setVatLoading(false);
+    }
+  
+    void loadVatSettings();
   }, []);
 
   const subtotal = items.reduce(
@@ -145,9 +165,7 @@ export default function NewInvoicePage() {
   const handleCustomerChange = (selectedId: string) => {
     setCustomerId(selectedId);
 
-    const selectedCustomer = customers.find(
-      (item) => item.id === selectedId
-    );
+    const selectedCustomer = customers.find((item) => item.id === selectedId);
 
     if (!selectedCustomer) {
       setCustomer("");
@@ -194,9 +212,7 @@ export default function NewInvoicePage() {
   const removeItem = (id: number) => {
     if (savedInvoiceId) return;
 
-    setItems((current) =>
-      current.filter((item) => item.id !== id)
-    );
+    setItems((current) => current.filter((item) => item.id !== id));
   };
 
   const formatMoney = (amount: number) =>
@@ -307,8 +323,7 @@ export default function NewInvoicePage() {
       }
 
       // Submit through the secure database function.
-      const submitResult =
-        await submitInvoiceForApproval(invoiceId);
+      const submitResult = await submitInvoiceForApproval(invoiceId);
 
       if (!submitResult.success) {
         setMessageType("error");
@@ -338,7 +353,6 @@ export default function NewInvoicePage() {
   return (
     <div className="min-h-screen bg-slate-50 p-5 md:p-8">
       <div className="mx-auto max-w-6xl">
-
         {/* Header */}
         <div className="mb-8">
           <Link
@@ -367,7 +381,6 @@ export default function NewInvoicePage() {
         </div>
 
         <div className="space-y-6">
-
           {/* Invoice Information */}
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-6 flex items-center gap-3">
@@ -388,9 +401,7 @@ export default function NewInvoicePage() {
 
             <div className="grid gap-5 md:grid-cols-2">
               <div>
-                <label className={labelClass}>
-                  Invoice Reference
-                </label>
+                <label className={labelClass}>Invoice Reference</label>
 
                 <input
                   disabled
@@ -449,13 +460,12 @@ export default function NewInvoicePage() {
             </h2>
 
             <p className="mb-6 text-xs text-slate-600">
-              Select a registered customer. Their information will be filled in automatically.
+              Select a registered customer. Their information will be filled in
+              automatically.
             </p>
 
             <div className="mb-5">
-              <label className={labelClass}>
-                Select Customer / Company *
-              </label>
+              <label className={labelClass}>Select Customer / Company *</label>
 
               <select
                 value={customerId}
@@ -477,9 +487,7 @@ export default function NewInvoicePage() {
               </select>
 
               {customerLoadError && (
-                <p className="mt-2 text-sm text-red-600">
-                  {customerLoadError}
-                </p>
+                <p className="mt-2 text-sm text-red-600">{customerLoadError}</p>
               )}
 
               {!customersLoading &&
@@ -487,10 +495,7 @@ export default function NewInvoicePage() {
                 customers.length === 0 && (
                   <p className="mt-2 text-sm text-amber-700">
                     No customers have been registered yet.{" "}
-                    <Link
-                      href="/customers"
-                      className="font-semibold underline"
-                    >
+                    <Link href="/customers" className="font-semibold underline">
                       Add a customer
                     </Link>{" "}
                     before creating an invoice.
@@ -514,9 +519,7 @@ export default function NewInvoicePage() {
 
             <div className="grid gap-5 md:grid-cols-2">
               <div>
-                <label className={labelClass}>
-                  Customer / Company Name
-                </label>
+                <label className={labelClass}>Customer / Company Name</label>
 
                 <input
                   value={customer}
@@ -567,9 +570,7 @@ export default function NewInvoicePage() {
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="font-semibold text-slate-900">
-                  Invoice Items
-                </h2>
+                <h2 className="font-semibold text-slate-900">Invoice Items</h2>
 
                 <p className="mt-1 text-xs text-slate-600">
                   Add products, inspection services or other charges.
@@ -621,11 +622,7 @@ export default function NewInvoicePage() {
                         value={item.description}
                         disabled={Boolean(savedInvoiceId)}
                         onChange={(e) =>
-                          updateItem(
-                            item.id,
-                            "description",
-                            e.target.value
-                          )
+                          updateItem(item.id, "description", e.target.value)
                         }
                         placeholder="e.g. Ultrasonic Testing Services"
                         className={inputClass}
@@ -666,11 +663,7 @@ export default function NewInvoicePage() {
                         value={item.price}
                         disabled={Boolean(savedInvoiceId)}
                         onChange={(e) =>
-                          updateItem(
-                            item.id,
-                            "price",
-                            Number(e.target.value)
-                          )
+                          updateItem(item.id, "price", Number(e.target.value))
                         }
                         className={inputClass}
                       />
@@ -723,22 +716,19 @@ export default function NewInvoicePage() {
                   <div className="flex justify-between text-lg font-bold text-slate-900">
                     <span>Total</span>
 
-                    <span className="text-[#142B49]">
-                      {formatMoney(total)}
-                    </span>
+                    <span className="text-[#142B49]">{formatMoney(total)}</span>
                   </div>
                 </div>
               </div>
-
-              {!vatEnabled && (
-                <p className="mt-4 text-xs text-slate-500">
-                  VAT is currently disabled by system configuration.
-                </p>
-              )}
             </div>
           </section>
 
           {/* Feedback */}
+          {!vatEnabled && (
+            <p className="mt-4 text-xs text-slate-500">
+              VAT is currently disabled by system configuration.
+            </p>
+          )}
           {message && (
             <div
               role="status"
@@ -764,7 +754,7 @@ export default function NewInvoicePage() {
 
             <button
               type="button"
-              disabled={!isFormValid || saving || Boolean(savedInvoiceId)}
+              disabled={!isFormValid || saving || vatLoading || Boolean(savedInvoiceId)}
               onClick={handleSaveDraft}
               className="flex items-center gap-2 rounded-lg bg-[#142B49] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#203F63] disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -774,7 +764,7 @@ export default function NewInvoicePage() {
 
             <button
               type="button"
-              disabled={!isFormValid || saving}
+              disabled={!isFormValid || saving || vatLoading}
               onClick={handleSubmitForApproval}
               className="flex items-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -782,8 +772,8 @@ export default function NewInvoicePage() {
               {saving
                 ? "Processing..."
                 : savedInvoiceId
-                  ? "Retry Submission"
-                  : "Submit for Approval"}
+                ? "Retry Submission"
+                : "Submit for Approval"}
             </button>
           </section>
         </div>

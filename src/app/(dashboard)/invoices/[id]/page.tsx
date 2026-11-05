@@ -1,4 +1,4 @@
-import PrintInvoiceButton from "@/components/print-invoice-button";
+import InvoicePdfDownload from "@/components/invoice-pdf-download";
 import InvoiceApprovalActions from "@/components/invoice-approval-actions";
 import InvoiceSubmitAction from "@/components/invoice-submit-action";
 import Image from "next/image";
@@ -209,22 +209,23 @@ export default async function InvoiceDetailsPage({
               {statusLabel(invoice.status)}
             </span>
 
-            <PrintInvoiceButton />
+            <InvoicePdfDownload invoice={invoice} items={items} />
 
             {/* Submit button for the invoice creator */}
             {isOwner && invoice.status === "draft" && (
               <InvoiceSubmitAction invoiceId={invoice.id} />
             )}
 
-            {/* Edit button for the invoice creator */}
-            {isOwner && invoice.status === "rejected" && (
-              <Link
-                href={`/invoices/${invoice.id}/edit`}
-                className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white hover:bg-[#203F63] print:hidden"
-              >
-                Edit Invoice
-              </Link>
-            )}
+            {/* Edit button for draft and rejected invoices */}
+            {(isOwner || isAdmin) &&
+              ["draft", "rejected"].includes(invoice.status) && (
+                <Link
+                  href={`/invoices/${invoice.id}/edit`}
+                  className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white hover:bg-[#203F63] print:hidden"
+                >
+                  {invoice.status === "draft" ? "Edit Draft" : "Edit Invoice"}
+                </Link>
+              )}
 
             {/* Approval controls for administrators */}
             {isAdmin && invoice.status === "pending_approval" && (
@@ -245,10 +246,6 @@ export default async function InvoiceDetailsPage({
                   height={90}
                   className="h-auto w-44 object-contain"
                 />
-
-                <p className="mt-4 text-sm text-slate-500">
-                  Kaotheem Energy Services Ltd
-                </p>
               </div>
 
               <div className="text-left sm:text-right">
@@ -274,7 +271,7 @@ export default async function InvoiceDetailsPage({
           </div>
 
           {/* Customer and invoice information */}
-          <div className="grid gap-8 border-b border-slate-200 p-6 md:grid-cols-2 md:p-9">
+          <div className="invoice-info-grid grid grid-cols-1 gap-8 border-b border-slate-200 p-6 md:grid-cols-2 md:p-9">
             <div>
               <div className="mb-4 flex items-center gap-2 text-[#142B49]">
                 <Building2 size={18} />
@@ -456,6 +453,70 @@ export default async function InvoiceDetailsPage({
             </div>
           </div>
 
+          {/* Bank Details and Authorised Signatory */}
+          <div className="border-t border-slate-200 p-6 md:p-9">
+            <div className="invoice-payment-grid grid grid-cols-2 gap-5">
+              {/* Bank Details */}
+              <div>
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#142B49]">
+                  Payment Details
+                </h3>
+
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">Bank</span>
+                    <span className="font-semibold text-slate-800">
+                      PremiumTrust Bank
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">Account Name</span>
+                    <span className="text-right font-semibold text-slate-800">
+                      Kaotheem Energy Services Ltd
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">Account Number</span>
+                    <span className="font-semibold tracking-wide text-slate-800">
+                      0010133736
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Authorised Signatory */}
+              <div>
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#142B49]">
+                  Authorised Signatory
+                </h3>
+
+                {/* Company Stamp */}
+                {["approved", "paid", "partially_paid"].includes(
+                  invoice.status
+                ) && (
+                  <div className="mb-4">
+                    <Image
+                      src="/kaotheem-stamp.png"
+                      alt="Kaotheem Energy Services Ltd Official Stamp"
+                      width={160}
+                      height={160}
+                      className="h-auto w-40 object-contain"
+                    />
+                  </div>
+                )}
+
+                <div className="border-t border-slate-300 pt-3">
+                  <p className="font-bold text-slate-900">Jimoh Ibrahim</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Business Development Manager
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Footer */}
           <div className="border-t border-slate-200 bg-slate-50 px-6 py-5 text-center">
             <p className="text-xs text-slate-500">
@@ -463,11 +524,6 @@ export default async function InvoiceDetailsPage({
             </p>
           </div>
         </div>
-
-        <p className="mt-5 text-center text-xs text-slate-400 print:hidden">
-          This is an invoice preview. Official invoice numbering and PDF
-          generation will be added in a later stage.
-        </p>
       </div>
     </div>
   );
