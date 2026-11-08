@@ -8,6 +8,7 @@ import InvoicePdf from "@/components/invoice-pdf";
 type Invoice = {
   invoice_number: string | null;
   status: string;
+  payment_account: "product" | "equipment" | null;
   currency: string;
   invoice_date: string;
   due_date: string | null;
@@ -29,6 +30,7 @@ type InvoiceItem = {
   id: string;
   description: string;
   quantity: number;
+  uom: string;
   unit_price: number;
   line_total: number;
 };

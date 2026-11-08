@@ -33,26 +33,29 @@ export default async function EditInvoicePage({ params }: PageProps) {
     .from("invoices")
     .select(
       `
-      id,
-      invoice_number,
-      vat_enabled,
-      vat_rate,
-      status,
-      created_by,
-      currency,
-      invoice_date,
-      due_date,
-      rejection_reason,
-      customers (
-        company_name
-      )
-    `
+    id,
+    invoice_number,
+    vat_enabled,
+    vat_rate,
+    status,
+    created_by,
+    currency,
+    invoice_date,
+    due_date,
+    rejection_reason,
+    customers (
+      company_name
     )
-    .eq("id", id)
-    .in("status", ["draft", "rejected"]);
+  `
+    )
+    .eq("id", id);
 
-  if (!isAdmin) {
-    invoiceQuery = invoiceQuery.eq("created_by", userId);
+  if (isAdmin) {
+    invoiceQuery = invoiceQuery.in("status", ["draft", "rejected", "approved"]);
+  } else {
+    invoiceQuery = invoiceQuery
+      .eq("created_by", userId)
+      .in("status", ["draft", "rejected"]);
   }
 
   const { data: invoice, error } = await invoiceQuery.maybeSingle();
@@ -67,7 +70,7 @@ export default async function EditInvoicePage({ params }: PageProps) {
 
   const { data: items, error: itemsError } = await supabase
     .from("invoice_items")
-    .select("description, quantity, unit_price")
+    .select("description, quantity, unit_price, uom")
     .eq("invoice_id", id);
 
   if (itemsError) {
@@ -88,7 +91,11 @@ export default async function EditInvoicePage({ params }: PageProps) {
 
         <div className="mt-6">
           <h1 className="text-2xl font-bold text-slate-900">
-            {isRejected ? "Edit Rejected Invoice" : "Edit Draft Invoice"}
+            {invoice.status === "approved"
+              ? "Edit Approved Invoice"
+              : isRejected
+              ? "Edit Rejected Invoice"
+              : "Edit Draft Invoice"}
           </h1>
 
           <p className="mt-2 text-sm text-slate-500">
@@ -111,8 +118,8 @@ export default async function EditInvoicePage({ params }: PageProps) {
         <div className="mt-8">
           <EditInvoiceForm
             invoiceId={invoice.id}
-            status={invoice.status as "draft" | "rejected"}
-            canSubmit={invoice.created_by === userId}
+            status={invoice.status as "draft" | "rejected" | "approved"}
+            canSubmit={invoice.created_by === userId && invoice.status !== "approved"}
             vatEnabled={Boolean(invoice.vat_enabled)}
             vatRate={Number(invoice.vat_rate || 0)}
             initialData={{
@@ -122,6 +129,7 @@ export default async function EditInvoicePage({ params }: PageProps) {
               items: (items || []).map((item) => ({
                 description: item.description,
                 quantity: Number(item.quantity),
+                uom: item.uom || "PCS",
                 price: Number(item.unit_price),
               })),
             }}

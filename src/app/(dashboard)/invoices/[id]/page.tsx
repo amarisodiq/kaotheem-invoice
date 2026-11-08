@@ -11,6 +11,7 @@ type InvoiceDetails = {
   id: string;
   invoice_number: string | null;
   status: string;
+  payment_account: "product" | "equipment" | null;
   created_by: string;
   rejection_reason: string | null;
   currency: string;
@@ -34,6 +35,7 @@ type InvoiceItem = {
   id: string;
   description: string;
   quantity: number;
+  uom: string;
   unit_price: number;
   line_total: number;
 };
@@ -114,6 +116,7 @@ export default async function InvoiceDetailsPage({
       id,
       invoice_number,
       status,
+      payment_account,
       created_by,
       rejection_reason,
       currency,
@@ -159,7 +162,7 @@ export default async function InvoiceDetailsPage({
   // Fetch the invoice line items.
   const { data: itemData, error: itemError } = await supabase
     .from("invoice_items")
-    .select("id, description, quantity, unit_price, line_total")
+    .select("id, description, quantity, unit_price, line_total, uom")
     .eq("invoice_id", id)
     .order("id", { ascending: true });
 
@@ -216,16 +219,17 @@ export default async function InvoiceDetailsPage({
               <InvoiceSubmitAction invoiceId={invoice.id} />
             )}
 
-            {/* Edit button for draft and rejected invoices */}
-            {(isOwner || isAdmin) &&
-              ["draft", "rejected"].includes(invoice.status) && (
-                <Link
-                  href={`/invoices/${invoice.id}/edit`}
-                  className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white hover:bg-[#203F63] print:hidden"
-                >
-                  {invoice.status === "draft" ? "Edit Draft" : "Edit Invoice"}
-                </Link>
-              )}
+            {/* Edit button for draft, rejected and approved invoices */}
+            {((isOwner || isAdmin) &&
+              ["draft", "rejected"].includes(invoice.status)) ||
+            (isAdmin && invoice.status === "approved") ? (
+              <Link
+                href={`/invoices/${invoice.id}/edit`}
+                className="rounded-lg bg-[#142B49] px-5 py-3 text-sm font-semibold text-white hover:bg-[#203F63] print:hidden"
+              >
+                {invoice.status === "draft" ? "Edit Draft" : "Edit Invoice"}
+              </Link>
+            ) : null}
 
             {/* Approval controls for administrators */}
             {isAdmin && invoice.status === "pending_approval" && (
@@ -366,24 +370,34 @@ export default async function InvoiceDetailsPage({
 
             <div className="overflow-x-auto">
               <table className="w-full min-w-[600px] text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <thead className="bg-[#DCEAF7] text-xs uppercase text-[#142B49]">
                   <tr>
+                    <th className="px-4 py-4">Sr.No</th>
                     <th className="px-4 py-4">Description</th>
                     <th className="px-4 py-4 text-right">Quantity</th>
+                    <th className="px-4 py-4 text-center">UOM</th>
                     <th className="px-4 py-4 text-right">Unit Price</th>
                     <th className="px-4 py-4 text-right">Amount</th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {items.map((item) => (
+                  {items.map((item, index) => (
                     <tr key={item.id}>
+                      <td className="px-4 py-4 text-center text-slate-500">
+                        {index + 1}
+                      </td>
+
                       <td className="px-4 py-4 font-medium text-slate-800">
                         {item.description}
                       </td>
 
                       <td className="px-4 py-4 text-right text-slate-600">
                         {Number(item.quantity).toLocaleString()}
+                      </td>
+
+                      <td className="px-4 py-4 text-center text-slate-600">
+                        {item.uom || "PCS"}
                       </td>
 
                       <td className="px-4 py-4 text-right text-slate-600">
@@ -405,7 +419,7 @@ export default async function InvoiceDetailsPage({
                   {items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={4}
+                        colSpan={6}
                         className="px-4 py-8 text-center text-slate-500"
                       >
                         No invoice items found.
@@ -457,33 +471,55 @@ export default async function InvoiceDetailsPage({
           <div className="border-t border-slate-200 p-6 md:p-9">
             <div className="invoice-payment-grid grid grid-cols-2 gap-5">
               {/* Bank Details */}
+              {/* Bank Details */}
               <div>
                 <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#142B49]">
                   Payment Details
                 </h3>
 
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-500">Bank</span>
-                    <span className="font-semibold text-slate-800">
-                      PremiumTrust Bank
-                    </span>
-                  </div>
+                {(() => {
+                  const account =
+                    invoice.payment_account === "product"
+                      ? {
+                          bank: "PremiumTrust Bank",
+                          number: "0010133736",
+                        }
+                      : invoice.payment_account === "equipment"
+                      ? {
+                          bank: "Providus Bank PLC",
+                          number: "5401773243",
+                        }
+                      : null;
 
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-500">Account Name</span>
-                    <span className="text-right font-semibold text-slate-800">
-                      Kaotheem Energy Services Ltd
-                    </span>
-                  </div>
+                  return account ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="flex justify-between gap-4">
+                        <span className="text-slate-500">Bank</span>
+                        <span className="font-semibold text-slate-800">
+                          {account.bank}
+                        </span>
+                      </div>
 
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-500">Account Number</span>
-                    <span className="font-semibold tracking-wide text-slate-800">
-                      0010133736
-                    </span>
-                  </div>
-                </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-slate-500">Account Name</span>
+                        <span className="text-right font-semibold text-slate-800">
+                          Kaotheem Energy Services Ltd
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between gap-4">
+                        <span className="text-slate-500">Account Number</span>
+                        <span className="font-semibold tracking-wide text-slate-800">
+                          {account.number}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">
+                      No payment account was selected for this invoice.
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Authorised Signatory */}

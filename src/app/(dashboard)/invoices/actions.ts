@@ -4,9 +4,36 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+async function writeAuditLog(input: {
+  userId: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  details?: Record<string, unknown>;
+}) {
+  try {
+    const adminClient = createAdminClient();
+
+    const { error } = await adminClient.from("audit_logs").insert({
+      user_id: input.userId,
+      action: input.action,
+      entity_type: input.entityType,
+      entity_id: input.entityId ?? null,
+      details: input.details ?? {},
+    });
+
+    if (error) {
+      console.error("Audit log error:", error);
+    }
+  } catch (error) {
+    console.error("Audit log failure:", error);
+  }
+}
+
 export type InvoiceItemInput = {
   description: string;
   quantity: number;
+  uom: string;
   price: number;
 };
 
@@ -17,12 +44,26 @@ export type SaveInvoiceInput = {
   phone: string;
   address: string;
   currency: string;
+  paymentAccount: "product" | "equipment";
   invoiceDate: string;
   dueDate: string;
   items: InvoiceItemInput[];
 };
 
 const ALLOWED_CURRENCIES = ["NGN", "USD", "GBP", "EUR"];
+
+const ALLOWED_UOMS = [
+  "PCS",
+  "LOT",
+  "SET",
+  "DAY",
+  "HR",
+  "MTR",
+  "KG",
+  "LTR",
+  "JOB",
+  "Other",
+];
 
 async function getAuthenticatedUser() {
   const supabase = await createClient();
@@ -82,6 +123,13 @@ export async function saveInvoice(input: SaveInvoiceInput) {
     };
   }
 
+  if (!["product", "equipment"].includes(input.paymentAccount)) {
+    return {
+      success: false,
+      message: "Please select a valid payment account.",
+    };
+  }
+
   if (!input.items?.length || input.items.length > 100) {
     return {
       success: false,
@@ -92,6 +140,7 @@ export async function saveInvoice(input: SaveInvoiceInput) {
   const validItems = input.items.filter(
     (item) =>
       item.description?.trim() &&
+      ALLOWED_UOMS.includes(item.uom) &&
       Number.isFinite(item.quantity) &&
       Number.isFinite(item.price) &&
       item.quantity > 0 &&
@@ -127,11 +176,13 @@ export async function saveInvoice(input: SaveInvoiceInput) {
     {
       p_customer_id: input.customerId,
       p_currency: input.currency,
+      p_payment_account: input.paymentAccount,
       p_invoice_date: input.invoiceDate,
       p_due_date: input.dueDate || null,
       p_items: validItems.map((item) => ({
         description: item.description.trim(),
         quantity: item.quantity,
+        uom: item.uom,
         price: item.price,
       })),
     }
@@ -189,6 +240,13 @@ export async function submitInvoiceForApproval(invoiceId: string) {
     };
   }
 
+  await writeAuditLog({
+    userId,
+    action: "submitted_for_approval",
+    entityType: "invoice",
+    entityId: invoiceId,
+  });
+
   revalidatePath("/approvals");
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${invoiceId}`);
@@ -239,6 +297,13 @@ export async function approveInvoice(invoiceId: string) {
       message: "Unable to approve this invoice. Please try again.",
     };
   }
+
+  await writeAuditLog({
+    userId,
+    action: "approved_invoice",
+    entityType: "invoice",
+    entityId: invoiceId,
+  });
 
   revalidatePath("/approvals");
   revalidatePath("/invoices");
@@ -300,6 +365,16 @@ export async function rejectInvoice(invoiceId: string, reason: string) {
     };
   }
 
+  await writeAuditLog({
+    userId,
+    action: "rejected_invoice",
+    entityType: "invoice",
+    entityId: invoiceId,
+    details: {
+      reason: reason.trim(),
+    },
+  });
+
   revalidatePath("/approvals");
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${invoiceId}`);
@@ -320,6 +395,7 @@ export async function updateRejectedInvoice(
     items: {
       description: string;
       quantity: number;
+      uom: string;
       price: number;
     }[];
   }
@@ -374,6 +450,7 @@ export async function updateRejectedInvoice(
   const validItems = input.items.filter(
     (item) =>
       item.description?.trim() &&
+      ALLOWED_UOMS.includes(item.uom) &&
       Number.isFinite(item.quantity) &&
       Number.isFinite(item.price) &&
       item.quantity > 0 &&
@@ -404,6 +481,13 @@ export async function updateRejectedInvoice(
     };
   }
 
+  await writeAuditLog({
+    userId,
+    action: "updated_rejected_invoice",
+    entityType: "invoice",
+    entityId: invoiceId,
+  });
+
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${invoiceId}`);
   revalidatePath("/approvals");
@@ -411,6 +495,124 @@ export async function updateRejectedInvoice(
   return {
     success: true,
     message: "Invoice updated successfully.",
+  };
+}
+
+// ADMIN UPDATE AN APPROVED INVOICE
+export async function adminUpdateApprovedInvoice(
+  invoiceId: string,
+  input: {
+    invoiceDate: string;
+    dueDate: string;
+    currency: string;
+    items: InvoiceItemInput[];
+  }
+) {
+  const { supabase, userId } = await getAuthenticatedUser();
+
+  if (!userId) {
+    return {
+      success: false,
+      message: "Your session has expired. Please sign in again.",
+    };
+  }
+
+  if (!(await isAdministrator(supabase, userId))) {
+    return {
+      success: false,
+      message: "Only administrators can edit approved invoices.",
+    };
+  }
+
+  if (!invoiceId) {
+    return {
+      success: false,
+      message: "Invalid invoice reference.",
+    };
+  }
+
+  if (!ALLOWED_CURRENCIES.includes(input.currency)) {
+    return {
+      success: false,
+      message: "Invalid invoice currency.",
+    };
+  }
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.invoiceDate) ||
+    (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate))
+  ) {
+    return {
+      success: false,
+      message: "Please enter valid invoice dates.",
+    };
+  }
+
+  if (input.dueDate && input.dueDate < input.invoiceDate) {
+    return {
+      success: false,
+      message: "The due date cannot be before the invoice date.",
+    };
+  }
+
+  if (!input.items?.length || input.items.length > 100) {
+    return {
+      success: false,
+      message: "Add between 1 and 100 invoice items.",
+    };
+  }
+
+  const validItems = input.items.filter(
+    (item) =>
+      item.description?.trim() &&
+      ALLOWED_UOMS.includes(item.uom) &&
+      Number.isFinite(item.quantity) &&
+      Number.isFinite(item.price) &&
+      item.quantity > 0 &&
+      item.price > 0
+  );
+
+  if (validItems.length !== input.items.length) {
+    return {
+      success: false,
+      message: "Check every item description, quantity and price.",
+    };
+  }
+
+  const { data, error } = await supabase.rpc("admin_update_approved_invoice", {
+    p_invoice_id: invoiceId,
+    p_invoice_date: input.invoiceDate,
+    p_due_date: input.dueDate || null,
+    p_currency: input.currency,
+    p_items: validItems,
+  });
+
+  if (error) {
+    console.error("Approved invoice update error:", error);
+
+    return {
+      success: false,
+      message: error.message || "Unable to update this invoice.",
+    };
+  }
+
+  await writeAuditLog({
+    userId,
+    action: "updated_approved_invoice",
+    entityType: "invoice",
+    entityId: invoiceId,
+  });
+
+  revalidatePath("/invoices");
+  revalidatePath(`/invoices/${invoiceId}`);
+  revalidatePath("/approvals");
+
+  return {
+    success: true,
+    message:
+      typeof data === "string"
+        ? data
+        : "Approved invoice updated successfully.",
   };
 }
 
@@ -444,6 +646,13 @@ export async function resubmitRejectedInvoice(invoiceId: string) {
       message: error.message || "Unable to resubmit this invoice.",
     };
   }
+
+  await writeAuditLog({
+    userId,
+    action: "resubmitted_invoice",
+    entityType: "invoice",
+    entityId: invoiceId,
+  });
 
   revalidatePath("/approvals");
   revalidatePath("/invoices");
@@ -538,15 +747,33 @@ export async function inviteStaffMember(fullName: string, email: string) {
     staffUserId = data.user.id;
   }
 
+  const { data: existingProfile, error: lookupError } = await adminClient
+    .from("profiles")
+    .select("id, role")
+    .eq("id", staffUserId)
+    .maybeSingle();
+
+  if (lookupError) {
+    return {
+      success: false,
+      message: "Unable to verify the existing profile.",
+    };
+  }
+
+  if (existingProfile?.role === "admin") {
+    return {
+      success: false,
+      message: "This account is already an administrator.",
+    };
+  }
+
   const { error: profileError } = await adminClient.from("profiles").upsert(
     {
       id: staffUserId,
       full_name: cleanName,
       role: "staff",
     },
-    {
-      onConflict: "id",
-    }
+    { onConflict: "id" }
   );
 
   if (profileError) {
@@ -558,6 +785,17 @@ export async function inviteStaffMember(fullName: string, email: string) {
     };
   }
 
+  await writeAuditLog({
+    userId,
+    action: "invited_staff",
+    entityType: "staff",
+    entityId: staffUserId,
+    details: {
+      email: cleanEmail,
+      fullName: cleanName,
+    },
+  });
+
   revalidatePath("/staff");
 
   return {
@@ -567,7 +805,6 @@ export async function inviteStaffMember(fullName: string, email: string) {
       : `Invitation sent to ${cleanEmail}.`,
   };
 }
-
 
 // RECORD AN INVOICE PAYMENT
 export async function recordInvoicePayment(input: {
@@ -622,16 +859,13 @@ export async function recordInvoicePayment(input: {
     };
   }
 
-  const { data, error } = await supabase.rpc(
-    "record_invoice_payment",
-    {
-      p_invoice_id: input.invoiceId,
-      p_amount: input.amount,
-      p_payment_date: input.paymentDate,
-      p_payment_method: input.paymentMethod.trim(),
-      p_reference: input.reference.trim() || null,
-    }
-  );
+  const { data, error } = await supabase.rpc("record_invoice_payment", {
+    p_invoice_id: input.invoiceId,
+    p_amount: input.amount,
+    p_payment_date: input.paymentDate,
+    p_payment_method: input.paymentMethod.trim(),
+    p_reference: input.reference.trim() || null,
+  });
 
   if (error) {
     console.error("Payment recording error:", error);
@@ -642,6 +876,19 @@ export async function recordInvoicePayment(input: {
     };
   }
 
+  await writeAuditLog({
+    userId,
+    action: "recorded_payment",
+    entityType: "invoice",
+    entityId: input.invoiceId,
+    details: {
+      amount: input.amount,
+      paymentDate: input.paymentDate,
+      paymentMethod: input.paymentMethod,
+      reference: input.reference,
+    },
+  });
+
   revalidatePath("/payments");
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${input.invoiceId}`);
@@ -649,10 +896,7 @@ export async function recordInvoicePayment(input: {
 
   return {
     success: true,
-    message:
-      typeof data === "string"
-        ? data
-        : "Payment recorded successfully.",
+    message: typeof data === "string" ? data : "Payment recorded successfully.",
   };
 }
 
@@ -677,24 +921,17 @@ export async function updateVATSettings(input: {
     };
   }
 
-  if (
-    !Number.isFinite(input.rate) ||
-    input.rate < 0 ||
-    input.rate > 100
-  ) {
+  if (!Number.isFinite(input.rate) || input.rate < 0 || input.rate > 100) {
     return {
       success: false,
       message: "VAT rate must be between 0 and 100.",
     };
   }
 
-  const { data, error } = await supabase.rpc(
-    "update_vat_settings",
-    {
-      p_enabled: input.enabled,
-      p_rate: input.rate,
-    }
-  );
+  const { data, error } = await supabase.rpc("update_vat_settings", {
+    p_enabled: input.enabled,
+    p_rate: input.rate,
+  });
 
   if (error) {
     console.error("VAT settings error:", error);
@@ -705,22 +942,28 @@ export async function updateVATSettings(input: {
     };
   }
 
+  await writeAuditLog({
+    userId,
+    action: "updated_vat_settings",
+    entityType: "company_settings",
+    details: {
+      enabled: input.enabled,
+      rate: input.rate,
+    },
+  });
+
   revalidatePath("/settings");
   revalidatePath("/invoices/new");
 
   return {
     success: true,
-    message: typeof data === "string"
-      ? data
-      : "VAT settings saved successfully.",
+    message:
+      typeof data === "string" ? data : "VAT settings saved successfully.",
   };
 }
 
-
 // UPDATE PERSONAL PROFILE
-export async function updatePersonalProfile(input: {
-  fullName: string;
-}) {
+export async function updatePersonalProfile(input: { fullName: string }) {
   const { supabase, userId } = await getAuthenticatedUser();
 
   if (!userId) {
@@ -750,6 +993,16 @@ export async function updatePersonalProfile(input: {
       message: error.message,
     };
   }
+
+  await writeAuditLog({
+    userId,
+    action: "updated_profile",
+    entityType: "profile",
+    entityId: userId,
+    details: {
+      fullName,
+    },
+  });
 
   revalidatePath("/settings");
   revalidatePath("/");

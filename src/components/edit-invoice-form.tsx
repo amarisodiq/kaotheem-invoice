@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useTransition } from "react";
@@ -6,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, Save, Loader2 } from "lucide-react";
 import {
   updateRejectedInvoice,
+  adminUpdateApprovedInvoice,
   resubmitRejectedInvoice,
   submitInvoiceForApproval,
 } from "@/app/(dashboard)/invoices/actions";
@@ -13,12 +13,13 @@ import {
 type InvoiceItem = {
   description: string;
   quantity: number;
+  uom: string;
   price: number;
 };
 
 type Props = {
   invoiceId: string;
-  status: "draft" | "rejected";
+  status: "draft" | "rejected" | "approved";
   canSubmit: boolean;
   vatEnabled: boolean;
   vatRate: number;
@@ -60,18 +61,16 @@ export default function EditInvoiceForm({
 
   const total = subtotal + vatAmount;
 
-  function updateItem(
-    index: number,
-    field: keyof InvoiceItem,
-    value: string
-  ) {
+  function updateItem(index: number, field: keyof InvoiceItem, value: string) {
     setItems((current) =>
       current.map((item, i) =>
         i === index
           ? {
               ...item,
               [field]:
-                field === "description" ? value : Number(value),
+                field === "description" || field === "uom"
+                  ? value
+                  : Number(value),
             }
           : item
       )
@@ -81,7 +80,7 @@ export default function EditInvoiceForm({
   function addItem() {
     setItems((current) => [
       ...current,
-      { description: "", quantity: 1, price: 0 },
+      { description: "", quantity: 1, uom: "PCS", price: 0 },
     ]);
   }
 
@@ -105,6 +104,7 @@ export default function EditInvoiceForm({
       items.some(
         (item) =>
           !item.description.trim() ||
+          !item.uom ||
           !Number.isFinite(item.quantity) ||
           !Number.isFinite(item.price) ||
           item.quantity <= 0 ||
@@ -121,12 +121,18 @@ export default function EditInvoiceForm({
   }
 
   async function saveChanges() {
-    return await updateRejectedInvoice(invoiceId, {
+    const input = {
       invoiceDate,
       dueDate,
       currency,
       items,
-    });
+    };
+
+    if (status === "approved") {
+      return await adminUpdateApprovedInvoice(invoiceId, input);
+    }
+
+    return await updateRejectedInvoice(invoiceId, input);
   }
 
   function handleSave() {
@@ -225,9 +231,7 @@ export default function EditInvoiceForm({
 
       <div className="mt-8">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-900">
-            Invoice Items
-          </h2>
+          <h2 className="text-lg font-bold text-slate-900">Invoice Items</h2>
 
           <button
             type="button"
@@ -278,6 +282,35 @@ export default function EditInvoiceForm({
                 />
               </div>
 
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-500">
+                  UOM
+                </label>
+                <select
+                  value={item.uom}
+                  onChange={(e) => updateItem(index, "uom", e.target.value)}
+                  disabled={isPending}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm"
+                >
+                  {[
+                    "PCS",
+                    "LOT",
+                    "SET",
+                    "DAY",
+                    "HR",
+                    "MTR",
+                    "KG",
+                    "LTR",
+                    "JOB",
+                    "Other",
+                  ].map((uom) => (
+                    <option key={uom} value={uom}>
+                      {uom}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="md:col-span-3">
                 <label className="mb-1 block text-xs font-semibold text-slate-500">
                   Unit Price
@@ -287,9 +320,7 @@ export default function EditInvoiceForm({
                   min="0.01"
                   step="any"
                   value={item.price}
-                  onChange={(e) =>
-                    updateItem(index, "price", e.target.value)
-                  }
+                  onChange={(e) => updateItem(index, "price", e.target.value)}
                   disabled={isPending}
                   className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm"
                 />
@@ -375,10 +406,14 @@ export default function EditInvoiceForm({
           ) : (
             <Save size={17} />
           )}
-          {isRejected ? "Save Corrections" : "Save Draft"}
+          {status === "approved"
+            ? "Save Approved Invoice"
+            : isRejected
+            ? "Save Corrections"
+            : "Save Draft"}
         </button>
 
-        {canSubmit && (
+        {canSubmit && status !== "approved" && (
           <button
             type="button"
             onClick={handleSubmit}
@@ -388,8 +423,8 @@ export default function EditInvoiceForm({
             {isPending
               ? "Processing..."
               : isRejected
-                ? "Save & Resubmit"
-                : "Save & Submit for Approval"}
+              ? "Save & Resubmit"
+              : "Save & Submit for Approval"}
           </button>
         )}
       </div>

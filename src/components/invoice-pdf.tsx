@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -14,6 +13,7 @@ type InvoicePdfProps = {
   invoice: {
     invoice_number: string | null;
     status: string;
+    payment_account: "product" | "equipment" | null;
     currency: string;
     invoice_date: string;
     due_date: string | null;
@@ -34,6 +34,7 @@ type InvoicePdfProps = {
     id: string;
     description: string;
     quantity: number;
+    uom: string;
     unit_price: number;
     line_total: number;
   }[];
@@ -122,7 +123,8 @@ const styles = StyleSheet.create({
   },
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: "#F1F5F9",
+    backgroundColor: "#DCEAF7",
+    color: "#142B49",
     padding: 8,
     fontWeight: "bold",
   },
@@ -132,19 +134,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
   },
+  serial: {
+    width: "6%",
+    textAlign: "center",
+  },
   description: {
-    width: "40%",
+    width: "30%",
   },
   quantity: {
-    width: "15%",
+    width: "10%",
     textAlign: "right",
   },
+  uom: {
+    width: "10%",
+    textAlign: "center",
+  },
   price: {
-    width: "22.5%",
+    width: "22%",
     textAlign: "right",
   },
   amount: {
-    width: "22.5%",
+    width: "22%",
     textAlign: "right",
   },
   totals: {
@@ -228,11 +238,22 @@ function formatStatus(status: string) {
 export default function InvoicePdf({ invoice, items }: InvoicePdfProps) {
   const customer = invoice.customers;
 
-  const showStamp = [
-    "approved",
-    "paid",
-    "partially_paid",
-  ].includes(invoice.status);
+  const paymentAccount =
+    invoice.payment_account === "product"
+      ? {
+          bank: "PremiumTrust Bank",
+          number: "0010133736",
+        }
+      : invoice.payment_account === "equipment"
+      ? {
+          bank: "Providus Bank PLC",
+          number: "5401773243",
+        }
+      : null;
+
+  const showStamp = ["approved", "paid", "partially_paid"].includes(
+    invoice.status
+  );
 
   return (
     <Document>
@@ -248,9 +269,7 @@ export default function InvoicePdf({ invoice, items }: InvoicePdfProps) {
             <Text style={styles.invoiceNumber}>
               {invoice.invoice_number || "Draft Invoice"}
             </Text>
-            <Text style={styles.date}>
-              {date(invoice.invoice_date)}
-            </Text>
+            <Text style={styles.date}>{date(invoice.invoice_date)}</Text>
           </View>
         </View>
 
@@ -270,28 +289,20 @@ export default function InvoicePdf({ invoice, items }: InvoicePdfProps) {
             )}
 
             {customer?.email && (
-              <Text style={styles.customerDetails}>
-                {customer.email}
-              </Text>
+              <Text style={styles.customerDetails}>{customer.email}</Text>
             )}
 
             {customer?.phone && (
-              <Text style={styles.customerDetails}>
-                {customer.phone}
-              </Text>
+              <Text style={styles.customerDetails}>{customer.phone}</Text>
             )}
 
             {customer?.address && (
-              <Text style={styles.customerDetails}>
-                {customer.address}
-              </Text>
+              <Text style={styles.customerDetails}>{customer.address}</Text>
             )}
           </View>
 
           <View style={styles.column}>
-            <Text style={styles.heading}>
-              Invoice Information
-            </Text>
+            <Text style={styles.heading}>Invoice Information</Text>
 
             <View style={styles.infoRow}>
               <Text style={styles.muted}>Invoice Date</Text>
@@ -320,21 +331,23 @@ export default function InvoicePdf({ invoice, items }: InvoicePdfProps) {
           <Text style={styles.heading}>Invoice Items</Text>
 
           <View style={styles.tableHeader}>
+            <Text style={styles.serial}>SR.NO</Text>
             <Text style={styles.description}>DESCRIPTION</Text>
             <Text style={styles.quantity}>QTY</Text>
+            <Text style={styles.uom}>UOM</Text>
             <Text style={styles.price}>UNIT PRICE</Text>
             <Text style={styles.amount}>AMOUNT</Text>
           </View>
 
-          {items.map((item) => (
+          {items.map((item, index) => (
             <View key={item.id} style={styles.tableRow}>
-              <Text style={styles.description}>
-                {item.description}
-              </Text>
+              <Text style={styles.serial}>{index + 1}</Text>
 
-              <Text style={styles.quantity}>
-                {item.quantity}
-              </Text>
+              <Text style={styles.description}>{item.description}</Text>
+
+              <Text style={styles.quantity}>{item.quantity}</Text>
+
+              <Text style={styles.uom}>{item.uom || "PCS"}</Text>
 
               <Text style={styles.price}>
                 {money(Number(item.unit_price), invoice.currency)}
@@ -351,68 +364,62 @@ export default function InvoicePdf({ invoice, items }: InvoicePdfProps) {
         <View style={styles.totals}>
           <View style={styles.totalRow}>
             <Text style={styles.muted}>Subtotal</Text>
-            <Text>
-              {money(Number(invoice.subtotal), invoice.currency)}
-            </Text>
+            <Text>{money(Number(invoice.subtotal), invoice.currency)}</Text>
           </View>
 
           <View style={styles.totalRow}>
             <Text style={styles.muted}>
-              VAT {invoice.vat_enabled
-                ? `(${invoice.vat_rate}%)`
-                : "(Disabled)"}
+              VAT{" "}
+              {invoice.vat_enabled ? `(${invoice.vat_rate}%)` : "(Disabled)"}
             </Text>
 
-            <Text>
-              {money(Number(invoice.vat_amount), invoice.currency)}
-            </Text>
+            <Text>{money(Number(invoice.vat_amount), invoice.currency)}</Text>
           </View>
 
           <View style={[styles.totalRow, styles.grandTotal]}>
             <Text>Total</Text>
-            <Text>
-              {money(Number(invoice.total), invoice.currency)}
-            </Text>
+            <Text>{money(Number(invoice.total), invoice.currency)}</Text>
           </View>
         </View>
 
         {/* PAYMENT DETAILS */}
+        {/* PAYMENT DETAILS */}
         <View style={styles.payment}>
           <Text style={styles.heading}>Payment Details</Text>
 
-          <View style={styles.paymentRow}>
-            <Text style={styles.muted}>Bank</Text>
-            <Text>PremiumTrust Bank</Text>
-          </View>
+          {paymentAccount ? (
+            <>
+              <View style={styles.paymentRow}>
+                <Text style={styles.muted}>Bank</Text>
+                <Text>{paymentAccount.bank}</Text>
+              </View>
 
-          <View style={styles.paymentRow}>
-            <Text style={styles.muted}>Account Name</Text>
-            <Text>Kaotheem Energy Services Ltd</Text>
-          </View>
+              <View style={styles.paymentRow}>
+                <Text style={styles.muted}>Account Name</Text>
+                <Text>Kaotheem Energy Services Ltd</Text>
+              </View>
 
-          <View style={styles.paymentRow}>
-            <Text style={styles.muted}>Account Number</Text>
-            <Text>0010133736</Text>
-          </View>
-
-          {/* AUTHORISED SIGNATORY BELOW PAYMENT DETAILS */}
-          <View style={styles.signatory}>
-            <Text style={styles.heading}>
-              Authorised Signatory
+              <View style={styles.paymentRow}>
+                <Text style={styles.muted}>Account Number</Text>
+                <Text>{paymentAccount.number}</Text>
+              </View>
+            </>
+          ) : (
+            <Text style={styles.muted}>
+              No payment account was selected for this invoice.
             </Text>
+          )}
+
+          <View style={styles.signatory}>
+            <Text style={styles.heading}>Authorised Signatory</Text>
 
             {showStamp && (
-              <Image
-                src="/kaotheem-stamp.png"
-                style={styles.stamp}
-              />
+              <Image src="/kaotheem-stamp.png" style={styles.stamp} />
             )}
 
             <Text style={styles.bold}>Jimoh Ibrahim</Text>
 
-            <Text style={styles.muted}>
-              Business Development Manager
-            </Text>
+            <Text style={styles.muted}>Business Development Manager</Text>
           </View>
         </View>
 

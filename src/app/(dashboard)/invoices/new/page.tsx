@@ -19,6 +19,7 @@ type InvoiceItem = {
   id: number;
   description: string;
   quantity: number;
+  uom: string;
   price: number;
 };
 
@@ -50,6 +51,10 @@ export default function NewInvoicePage() {
 
   const [currency, setCurrency] = useState("NGN");
 
+  const [paymentAccount, setPaymentAccount] = useState<
+    "product" | "equipment" | ""
+  >("");
+
   // Customer selection
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [customerId, setCustomerId] = useState("");
@@ -70,6 +75,7 @@ export default function NewInvoicePage() {
       id: 1,
       description: "",
       quantity: 1,
+      uom: "PCS",
       price: 0,
     },
   ]);
@@ -119,29 +125,29 @@ export default function NewInvoicePage() {
   useEffect(() => {
     async function loadVatSettings() {
       const supabase = createClient();
-  
+
       const { data, error } = await supabase
         .from("company_settings")
         .select("setting_value")
         .eq("setting_key", "vat")
         .maybeSingle();
-  
+
       if (error) {
         console.error("VAT settings error:", error);
         setVatLoading(false);
         return;
       }
-  
+
       const settings = data?.setting_value as {
         enabled?: boolean;
         rate?: number;
       } | null;
-  
+
       setVatEnabled(settings?.enabled === true);
       setVatRate(Number(settings?.rate ?? 7.5));
       setVatLoading(false);
     }
-  
+
     void loadVatSettings();
   }, []);
 
@@ -190,6 +196,7 @@ export default function NewInvoicePage() {
         id: Date.now(),
         description: "",
         quantity: 1,
+        uom: "PCS",
         price: 0,
       },
     ]);
@@ -223,17 +230,8 @@ export default function NewInvoicePage() {
 
   const isFormValid =
     Boolean(customerId) &&
-    customer.trim().length > 0 &&
-    items.length > 0 &&
-    items.every(
-      (item) =>
-        item.description.trim().length > 0 &&
-        Number.isFinite(item.quantity) &&
-        Number.isFinite(item.price) &&
-        item.quantity > 0 &&
-        item.price > 0
-    ) &&
-    (!dueDate || dueDate >= invoiceDate);
+    Boolean(paymentAccount) &&
+    customer.trim().length > 0;
 
   async function handleSaveDraft() {
     if (!isFormValid || saving || savedInvoiceId) return;
@@ -249,11 +247,13 @@ export default function NewInvoicePage() {
         phone,
         address,
         currency,
+        paymentAccount: paymentAccount as "product" | "equipment",
         invoiceDate,
         dueDate,
         items: items.map((item) => ({
           description: item.description,
           quantity: item.quantity,
+          uom: item.uom,
           price: item.price,
         })),
       });
@@ -297,11 +297,13 @@ export default function NewInvoicePage() {
           phone,
           address,
           currency,
+          paymentAccount: paymentAccount as "product" | "equipment",
           invoiceDate,
           dueDate,
           items: items.map((item) => ({
             description: item.description,
             quantity: item.quantity,
+            uom: item.uom,
             price: item.price,
           })),
         });
@@ -423,6 +425,29 @@ export default function NewInvoicePage() {
                   <option value="USD">USD — US Dollar</option>
                   <option value="GBP">GBP — British Pound</option>
                   <option value="EUR">EUR — Euro</option>
+                </select>
+              </div>
+
+              <div>
+                <label className={labelClass}>Payment Account *</label>
+
+                <select
+                  value={paymentAccount}
+                  disabled={Boolean(savedInvoiceId)}
+                  onChange={(e) =>
+                    setPaymentAccount(
+                      e.target.value as "product" | "equipment" | ""
+                    )
+                  }
+                  className={inputClass}
+                >
+                  <option value="">Select payment account</option>
+                  <option value="product">
+                    Product Payments — PremiumTrust Bank
+                  </option>
+                  <option value="equipment">
+                    Service & Equipment Payments — Providus Bank
+                  </option>
                 </select>
               </div>
 
@@ -653,6 +678,32 @@ export default function NewInvoicePage() {
 
                     <div className="md:col-span-2">
                       <label className="mb-2 block text-xs font-medium text-slate-700">
+                        UOM
+                      </label>
+
+                      <select
+                        value={item.uom}
+                        disabled={Boolean(savedInvoiceId)}
+                        onChange={(e) =>
+                          updateItem(item.id, "uom", e.target.value)
+                        }
+                        className={inputClass}
+                      >
+                        <option value="PCS">PCS</option>
+                        <option value="LOT">LOT</option>
+                        <option value="SET">SET</option>
+                        <option value="DAY">DAY</option>
+                        <option value="HR">HR</option>
+                        <option value="MTR">MTR</option>
+                        <option value="KG">KG</option>
+                        <option value="LTR">LTR</option>
+                        <option value="JOB">JOB</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="mb-2 block text-xs font-medium text-slate-700">
                         Unit Price
                       </label>
 
@@ -754,7 +805,9 @@ export default function NewInvoicePage() {
 
             <button
               type="button"
-              disabled={!isFormValid || saving || vatLoading || Boolean(savedInvoiceId)}
+              disabled={
+                !isFormValid || saving || vatLoading || Boolean(savedInvoiceId)
+              }
               onClick={handleSaveDraft}
               className="flex items-center gap-2 rounded-lg bg-[#142B49] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#203F63] disabled:cursor-not-allowed disabled:opacity-50"
             >
